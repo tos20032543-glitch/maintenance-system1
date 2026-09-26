@@ -768,32 +768,6 @@
     </div>
 </div>
 
-<div id="deleteConfirmModal" class="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4 hidden">
-    <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border-2 border-red-500">
-        <div class="bg-red-600 text-white px-5 py-3.5 flex items-center justify-between">
-            <h3 class="font-bold text-sm sm:text-base flex items-center gap-2">
-                <i class="fa-solid fa-triangle-exclamation text-amber-300"></i> ยืนยันการลบบัญชีผู้ใช้งาน
-            </h3>
-            <span id="deleteStepBadge" class="bg-white text-red-600 font-extrabold px-2.5 py-0.5 rounded-full text-xs">ยืนยันครั้งที่ 1/3</span>
-        </div>
-        <div class="p-5 space-y-4">
-            <div class="bg-red-50 p-3 rounded-xl border border-red-200 text-red-900 text-xs">
-                <p class="font-bold">คำเตือน: การลบบัญชีเป็นสิ่งที่ไม่สามารถย้อนกลับได้</p>
-                <p id="deleteTargetUserInfo" class="mt-1 text-slate-700 font-semibold"></p>
-            </div>
-            <p id="deleteConfirmMessage" class="text-xs sm:text-sm font-semibold text-slate-800 text-center py-1">
-                คุณแน่ใจหรือไม่ว่าต้องการลบบัญชีนี้?
-            </p>
-            <div class="flex gap-2 justify-end pt-1">
-                <button onclick="cancelDeleteUser()" class="px-4 py-2 bg-slate-200 text-slate-700 text-xs font-bold rounded-xl">ยกเลิก</button>
-                <button id="deleteStepBtn" onclick="processDeleteStep()" class="px-5 py-2 bg-red-600 text-white text-xs font-bold rounded-xl shadow">
-                    ยืนยันการลบ (1/3)
-                </button>
-            </div>
-        </div>
-    </div>
-</div>
-
 <div id="imageModal" class="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 hidden" onclick="closeImageModal()">
     <div class="relative max-w-3xl w-full flex justify-center">
         <img id="modalImg" src="" class="max-h-[85vh] rounded-lg shadow-2xl object-contain">
@@ -807,6 +781,10 @@
 </div>
 
 <script>
+let deptChartInstance = null;
+let typeChartInstance = null;
+let userJobsChartInstance = null;
+
 function toggleMobileSidebar() {
     const sidebar = document.getElementById('sidebarNav');
     const backdrop = document.getElementById('sidebarBackdrop');
@@ -2007,23 +1985,77 @@ function handleSaveProfile(event) {
     showToast('บันทึกข้อมูลส่วนตัวเรียบร้อย');
 }
 
-/* ==================== ADMIN PPTX GENERATOR ==================== */
+/* ==================== ADMIN PPTX REPORT GENERATION ==================== */
 function generatePowerPointReport() {
     if (typeof PptxGenJS === 'undefined') {
-        showToast('ไม่สามารถดึงไลบรารี PPTX ได้', 'error');
+        showToast('ไลบรารีสร้าง PowerPoint ยังโหลดไม่สมบูรณ์', 'error');
         return;
     }
 
-    const pptx = new PptxGenJS();
-    pptx.layout = 'LAYOUT_16x9';
+    const startDate = document.getElementById('pptxStartDate').value;
+    const endDate = document.getElementById('pptxEndDate').value;
+    const season = document.getElementById('pptxSeason').value;
 
-    const slide = pptx.addSlide();
-    slide.addText('รายงานผลการปฏิบัติงาน แผนกซ่อมบำรุงไฟฟ้า', {
-        x: 1, y: 2, w: '80%', h: 1, fontSize: 24, bold: true, color: '0F172A', align: 'center'
+    let filtered = workLogs.filter(w => {
+        let isMatch = true;
+        if (startDate && w.date < startDate) isMatch = false;
+        if (endDate && w.date > endDate) isMatch = false;
+        if (season !== 'ALL' && w.season !== season) isMatch = false;
+        return isMatch;
     });
 
-    pptx.writeFile({ fileName: `Electrical_Maintenance_Report_${new Date().toISOString().split('T')[0]}.pptx` });
-    showToast('ส่งออกรายงาน PowerPoint เรียบร้อยแล้ว');
+    if (filtered.length === 0) {
+        showToast('ไม่พบข้อมูลส่งงานในช่วงเวลาที่เลือก', 'error');
+        return;
+    }
+
+    try {
+        const pptx = new PptxGenJS();
+        pptx.layout = 'LAYOUT_16x9';
+
+        // Slide 1: Cover Slide
+        const coverSlide = pptx.addSlide();
+        coverSlide.background = { color: '0F172A' };
+        coverSlide.addText('รายงานผลการปฏิบัติงาน แผนกซ่อมบำรุงไฟฟ้า', {
+            x: 0.5, y: 2.0, w: '90%', h: 1.0,
+            fontSize: 28, bold: true, color: 'F59E0B', align: 'center'
+        });
+        coverSlide.addText(`ช่วงวันที่: ${startDate || 'ทั้งหมด'} ถึง ${endDate || 'ปัจจุบัน'} | ฤดูกาล: ${season}`, {
+            x: 0.5, y: 3.2, w: '90%', h: 0.5,
+            fontSize: 16, color: '94A3B8', align: 'center'
+        });
+
+        // Slide 2: Details List
+        let slide = pptx.addSlide();
+        slide.addText('สรุปรายการส่งงานซ่อมบำรุง', { x: 0.5, y: 0.5, fontSize: 20, bold: true, color: '0F172A' });
+
+        let yPos = 1.2;
+        let count = 0;
+
+        filtered.forEach((item) => {
+            if (count > 0 && count % 4 === 0) {
+                slide = pptx.addSlide();
+                slide.addText('สรุปรายการส่งงานซ่อมบำรุง (ต่อ)', { x: 0.5, y: 0.5, fontSize: 20, bold: true, color: '0F172A' });
+                yPos = 1.2;
+            }
+
+            const techName = item.submittedBy ? item.submittedBy.name : '-';
+            const taskText = item.tasks ? item.tasks.map(t => `${t.type}: ${t.details}`).join(' | ') : '-';
+
+            slide.addText(`• [${item.date}] [${item.department}] ช่าง: ${techName}\n  งาน: ${taskText}`, {
+                x: 0.5, y: yPos, w: 9.0, h: 0.8, fontSize: 13, color: '334155'
+            });
+
+            yPos += 1.0;
+            count++;
+        });
+
+        pptx.writeFile({ fileName: `Electrical_Maintenance_Report_${new Date().toISOString().split('T')[0]}.pptx` });
+        showToast('ส่งออกรายงาน PowerPoint สำเร็จ!');
+    } catch (err) {
+        console.error(err);
+        showToast('เกิดข้อผิดพลาดในการสร้างไฟล์ PowerPoint', 'error');
+    }
 }
 </script>
 </body>
